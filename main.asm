@@ -34,18 +34,12 @@ extern  _ReadConsoleA@20:near
 
 .data
 invalidInputMsg		byte	'Invalid Input',0
-operatorOutput		byte	'Operation Type: (1 = Addition | 2 = Subtraction | 3 = Multiplication | 4 = Division | 5 = Exponential): '
+operatorOutput		byte	'Operation Type: (+ = Addition | - = Subtraction | * = Multiplication | / = Division | ^ = Exponential): '
 prompt				byte	"First Value: ", 0		; ends with strin terminator (NULL or 0)
 prompt2				byte	"Second Value: ", 0
-results				byte	"You typed: ", 0
+results				byte	"Output: ", 0
 outputHandle		dword   ?						; Storage the the handle for input and output. uninitslized
 written				dword   ?
-
-ADDITION			byte	"+",0
-SUBTRACTION			byte	"-",0
-MULTIPLICATION		byte	"*",0
-DIVISION			byte	"/",0
-EXPONTENTIAL		byte	"^",0
 
 readBuffer			byte	1024		DUP(00h)
 numCharsToRead		dword	1024
@@ -68,6 +62,10 @@ secondCharsRead		dword	?
 secondReadBuffer	byte	1024		DUP(00h)
 secondNum			dword	?
 
+count				dword	0
+countDown			dword	?
+wBIndex				dword	?
+writeBuffer			byte	1024		DUP(00h)
 
 
 .code
@@ -81,38 +79,58 @@ _main:
     call    _GetStdHandle@4
     mov     outputHandle, eax
 
-	call	getFirstInput			; Handles everything related to prompting the user input for the first number
+	call	getFirstInput			; First input is now contained in firstNum
+	call	getSecondInput			; Second input is now contained in the secondNum
+	call	getOperationInput		; Prompts the user for the operation type, then converts it into its ASCII value. The value is contained in the bl register
 
-	; Convert the first input into an integer, and move it into the firstNum value
-	push	offset firstReadBuffer
-	call	stringToInt				
-	mov		firstNum, eax
-
-	call	getSecondInput			
-
-	push	offset secondReadBuffer
-	call	stringToInt				
-	mov		secondNum, eax
-
-	call	getOperationInput		; Gets the operation value
-
-	push	offset opReadBuffer
-	call	stringToInt				
-	mov		opNum, eax
-
-	cmp		secondNum, 5			; Check if the operation value is less than 
-	jg		invalidInput
-
-	cmp		opNum, 1
+	cmp		bl, 42
 	jl		invalidInput
 
+	; Exponential
+	cmp		bl, 94
+	je		doExponential
 
+	; Multiplication
+	cmp		bl, 42
+	je		doMultiplication
 
-	; ExitProcess(uExitCode)
+	; Addition
+	cmp		bl, 43
+	je		doAddition
+
+	; Subtraction
+	cmp		bl, 45
+	je		doSubtraction
+	
+	; Division
+	cmp		bl, 47
+	je		doDivision
+
+	jmp invalidInput				; Acts as the else statement, if it goes through everything else
+
+main ENDP
+
+getResult PROC near
+_getResult:
+	
+	mov		firstNum, eax									; Push the return pointer back to the top
+
+	; WriteConsole(handle, &Prompt[0], 13, &written, 0)
+	push	0
+	push	offset written
+	push	8
+	push	offset results
+	mov		eax, offset results
+	push	outputHandle
+	call	_WriteConsoleA@20
+
+	push	firstNum
+	call	writeInt
+	
 	push	0
 	call	_ExitProcess@4
 
-main ENDP
+getResult ENDP
 
 writeline PROC near
 _writeline:
@@ -144,6 +162,45 @@ _readline:
 		call	_ReadConsoleA@20
 		ret
 readline ENDP
+
+writeInt PROC near
+_writeInt:
+            pop ebx                         ; Save the return address
+            pop eax                         ; Save first number to convert in register EAX
+            push ebx                        ; Restore return address, this frees up EBX for use here.
+            mov count, 0                    ; Reset count
+_convertLoop:
+            ; Find the remainder and put on stack
+            ; The choices are div for 8-bit division and idiv for 64-bit division. To use full registers, I had to use 64-bit division
+            mov  edx, 0                     ; idiv starts with a 64-bit number in registers edx:eax, therefore I zero out edx.
+            mov  ebx, 10                    ; Divide by 10.
+            idiv ebx
+            add  edx,'0'                    ; Make remainder into a character
+            push edx                        ; Put in on the stack for printing this digit
+            inc  count
+            cmp  eax, 0
+            jg   _convertLoop               ; Go back if there are more characters
+            mov  wBIndex, offset writeBuffer
+            mov   ebx, wBIndex
+            mov  byte ptr [ebx], ' '        ; Add starting blank space
+            inc  ebx                        ; Go to next byte location
+            mov   ecx, count                ; EBX is being reloading each divide, so I can use it here to
+            mov   countDown, ecx            ; transfer value to set up counter to go through all numbers
+_fillString:
+            pop   eax                       ; Remove the first stacked digit
+            mov  [ebx], al                  ; Write it in the array
+            dec   countDown
+            inc  ebx                        ; Go to next byte location
+            cmp   countDown, 0
+            jg   _fillString
+            mov  byte ptr[ebx], 0           ; Add end zero
+            inc  count                      ; Take into account extra space
+            push count                      ; How many characters to print
+            push offset writeBuffer         ; And the buffer itself
+            call writeline
+
+            ret                             ; And return
+writeInt ENDP
 
 stringToInt PROC
 _stringToInt:
@@ -189,15 +246,6 @@ _invalidInput:
 	call	_ExitProcess@4
 invalidInput ENDP
 
-doAddition PROC near
-_doAddition:
-	mov ecx, firstNum
-	mov edx, 5
-
-	add ecx, edx ; ecx contains return value
-	ret
-doAddition ENDP
-
 getFirstInput PROC near
 _getFirstInput:
 
@@ -222,7 +270,12 @@ _getFirstInput:
 	push	offset firstReadBuffer				; numCharsRead
 	push	inputHandle							; 
 	call	_ReadConsoleA@20
-	ret
+
+	push	offset firstReadBuffer
+	call	stringToInt				
+	mov		firstNum, eax
+
+	ret	; Returns the flow of the program back to main
 
 getFirstInput ENDP
 
@@ -245,7 +298,12 @@ _getSecondInput:
 	push	offset secondReadBuffer				; numCharsRead
 	push	inputHandle							; 
 	call	_ReadConsoleA@20
-	ret
+
+	push	offset secondReadBuffer
+	call	stringToInt				
+	mov		secondNum, eax
+
+	ret ; Returns the flow of the program back to main
 
 getSecondInput ENDP
 
@@ -268,9 +326,74 @@ _getOperationInput:
 	push	offset opReadBuffer				; numCharsRead
 	push	inputHandle							; 
 	call	_ReadConsoleA@20
+	
+	mov		bl, [opReadBuffer]
 	ret
 
 getOperationInput ENDP
 
+;-------------------------------------------------------------;
+;	Contains all the functions for the calculations			  ;
+;	This includes Addition, Subtraction,					  ;
+;   multiplication, division, and exponential numbers		  ;
+;-------------------------------------------------------------;
+doAddition PROC near
+_doAddition:
+	mov eax, firstNum
+	mov edx, secondNum
+
+	add eax, edx
+	call	getResult
+doAddition ENDP
+
+doSubtraction PROC near
+_doSubtraction:
+	mov eax, firstNum
+	mov edx, secondNum
+
+	sub eax, edx
+	call	getResult
+doSubtraction ENDP
+
+doMultiplication PROC near
+_doMultiplication:
+	mov eax, firstNum
+	mov edx, secondNum
+
+	imul eax, edx
+	call	getResult
+doMultiplication ENDP
+
+; Division is slightly different than the rest of the instructions
+; Quotient  is placed in EAX
+; Remainder is placed in EDX
+doDivision PROC near
+_doDivision:
+	mov		eax, firstNum
+	cdq
+	mov		ebx, secondNum
+	idiv secondNum
+	
+	call	getResult
+doDivision ENDP
+
+doExponential PROC near
+_doExponential:
+	mov eax, firstNum
+	mov edx, secondNum
+	mov ebx, firstNum ; EBX acts as a constant
+_iteration:
+	imul eax, ebx 
+	dec edx
+
+	cmp edx, 1
+	jle _endExponentLoop
+
+	jmp _iteration
+	
+_endExponentLoop:
+	call getResult
+
+doExponential ENDP
 
 END
